@@ -1,0 +1,258 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#101418">
+<title>Motor Bluetooth</title>
+<!--
+  APP PARA CONTROLAR UN MOTOR POR BLUETOOTH - ARDUINO MEGA 2560 + BTS7960
+  Programa del Mega: control_un_motor_bt_mega.ino
+
+  Bluetooth clásico (HC-05 / HC-06): Chrome 137 o más nuevo en Android, o Chrome / Edge en PC.
+                                     Antes, empareja el módulo en los ajustes de Bluetooth (clave 1234).
+  BLE (HM-10 / BT05):                Chrome en Android o PC. En iPhone, el navegador Bluefy.
+
+  El navegador solo permite Bluetooth si la página se abre desde https:// (por ejemplo GitHub Pages)
+  o, en PC, abriendo este archivo directamente con Chrome.
+-->
+<style>
+:root{--bg:#101418;--panel:#1a2027;--line:#2a323b;--fg:#e8edf2;--muted:#8a96a3;--acc:#2fa8ff;--ok:#3ccf7a;--bad:#ff4d4d;--warn:#ffb020}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+ touch-action:manipulation;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
+.app{max-width:520px;margin:0 auto;padding:12px 14px 24px;display:flex;flex-direction:column;gap:12px}
+header{display:flex;align-items:center;gap:10px}
+h1{font-size:20px;margin:0;flex:1}
+.pill{font-size:13px;padding:5px 10px;border-radius:99px;background:var(--panel);border:1px solid var(--line);display:flex;align-items:center;gap:6px}
+.pill i{width:9px;height:9px;border-radius:50%;background:var(--bad)}
+.pill.on i{background:var(--ok)}
+#paro{background:var(--bad);color:#fff;border:0;border-radius:10px;font-weight:800;padding:11px 14px;font-size:14px}
+#paro.activo{background:var(--warn);color:#111}
+#banner{background:var(--bad);color:#fff;padding:10px;border-radius:10px;text-align:center;font-weight:700}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.conectar{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.conectar button,#bDesc{border:1px solid var(--line);border-radius:12px;background:#22303c;color:var(--fg);font-size:16px;font-weight:700;padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.conectar button small{font-weight:500;color:var(--muted);font-size:12px}
+.conectar button:disabled{opacity:.4}
+#bDesc{background:#2a333d;font-size:15px}
+.grande{text-align:center}
+.grande b{display:block;font-size:64px;line-height:1;font-variant-numeric:tabular-nums}
+.grande span{color:var(--muted);font-size:15px}
+.barra{height:16px;background:#11161b;border-radius:8px;position:relative;overflow:hidden}
+.barra::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:2px;background:var(--line)}
+.barra b{position:absolute;top:0;bottom:0;left:50%;width:0;background:var(--ok)}
+.ejes{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+input[type=range]{width:100%;accent-color:var(--acc);height:44px;touch-action:none}
+.botones{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.botones button{border:0;border-radius:12px;background:#2a333d;color:var(--fg);font-size:17px;font-weight:700;padding:18px 6px;touch-action:none}
+.botones button.on{background:var(--acc);color:#04121f}
+#stop{background:#3a2228;color:#ffb3b3}
+.fila{display:flex;align-items:center;gap:10px}
+.fila label{min-width:130px}
+.fila input{flex:1;min-width:0;height:34px}
+.val{width:48px;text-align:right;font-variant-numeric:tabular-nums}
+.titulo{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.aviso{font-size:13px;color:var(--muted);margin:0}
+#estado{font-size:14px;margin:0}
+#estado.mal{color:var(--warn)}
+.oculto{display:none!important}
+</style></head><body><div class="app">
+<header><h1>Control del motor</h1><span class="pill" id="con"><i></i><span>Sin conexión</span></span><button id="paro">PARO</button></header>
+<div id="banner" class="oculto">Paro de emergencia activo. Toca REANUDAR para seguir.</div>
+
+<div class="card">
+  <div class="titulo">Bluetooth</div>
+  <div class="conectar" id="cConectar">
+    <button id="bClasico">Conectar<small>HC-05 / HC-06</small></button>
+    <button id="bBle">Conectar<small>HM-10 / BLE</small></button>
+  </div>
+  <button id="bDesc" class="oculto">Desconectar</button>
+  <p id="estado">Elige el tipo de módulo que tienes.</p>
+  <p class="aviso" id="soporte"></p>
+</div>
+
+<div class="card">
+  <div class="grande"><b id="real">0%</b><span id="dir">Detenido</span></div>
+  <div><div class="barra"><b id="barra"></b></div>
+  <div class="ejes"><span>Atrás</span><span>0</span><span>Adelante</span></div></div>
+</div>
+
+<div class="card">
+  <div class="titulo">Velocidad y dirección</div>
+  <input id="vel" type="range" min="-100" max="100" step="5" value="0" aria-label="Velocidad">
+  <div class="ejes"><span>-100% atrás</span><span id="pedido">0%</span><span>adelante 100%</span></div>
+  <div class="botones">
+    <button id="atras">&#9664; Atrás</button>
+    <button id="stop">&#9632; Detener</button>
+    <button id="adelante">Adelante &#9654;</button>
+  </div>
+  <p class="aviso">Deslizador: deja el motor girando a esa velocidad. Botones Atrás y Adelante: el motor gira solo mientras los mantienes presionados.</p>
+</div>
+
+<div class="card">
+  <div class="fila"><label for="vmax">Velocidad máxima</label><input id="vmax" type="range" min="20" max="100" step="5" value="60"><span class="val" id="vmaxV">60%</span></div>
+</div>
+<p class="aviso">Si se pierde la conexión, el motor se detiene solo. En computadora: flechas izquierda/derecha para mover y espacio para detener.</p>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const SPP='00001101-0000-1000-8000-00805f9b34fb';   // Bluetooth clásico, perfil puerto serie
+const enc=new TextEncoder(),dec=new TextDecoder();
+let tx=null,cerrar=null,tipo='',puerto=null,disp=null;
+let paro=false,boton=0,resto='',ultimoRx=0,conectadoEn=0;const keys={};
+
+// ---------- recibir del Mega: "E,<vel>,<paro>" ----------
+function recibir(txt){
+  resto+=txt;let i;
+  while((i=resto.indexOf('\n'))>=0){const l=resto.slice(0,i).trim();resto=resto.slice(i+1);if(l)linea(l)}
+  if(resto.length>100)resto='';
+}
+function linea(l){
+  const p=l.split(',');
+  if(p[0]!=='E'||p.length<3)return;
+  ultimoRx=Date.now();
+  mostrar(+p[1]/100,p[2]==='1');
+}
+
+// ---------- enviar al Mega (una escritura a la vez) ----------
+let ocupado=false;const cola=[];
+async function enviar(txt,importante){
+  if(!tx)return;
+  if(ocupado){if(importante)cola.push(txt);return}
+  ocupado=true;
+  try{await tx(txt+'\n')}catch(e){console.warn(e)}
+  ocupado=false;
+  if(cola.length)enviar(cola.shift(),true);
+}
+
+// ---------- Bluetooth clásico (HC-05 / HC-06) con Web Serial ----------
+async function pedirPuerto(){
+  try{return await navigator.serial.requestPort({filters:[{bluetoothServiceClassId:SPP}]})}
+  catch(e){if(e.name!=='TypeError')throw e;return await navigator.serial.requestPort()}
+}
+async function conectarClasico(){
+  estado('Elige el módulo en la lista...');
+  try{
+    if(!puerto)puerto=await pedirPuerto();
+    estado('Conectando...');
+    await puerto.open({baudRate:9600});
+  }catch(e){puerto=null;return fallo(e)}
+  const p=puerto,writer=p.writable.getWriter(),reader=p.readable.getReader();
+  tx=s=>writer.write(enc.encode(s));
+  const lectura=(async()=>{
+    try{for(;;){const {value,done}=await reader.read();if(done)break;recibir(dec.decode(value,{stream:true}))}}
+    catch(_){}
+    finally{reader.releaseLock()}
+  })();
+  cerrar=async()=>{
+    try{await reader.cancel()}catch(_){}
+    await lectura;
+    try{await writer.close()}catch(_){try{writer.releaseLock()}catch(_){}}
+    try{await p.close()}catch(_){}
+  };
+  listo('clasico');
+  lectura.then(()=>{if(tipo==='clasico'&&tx)desconectar(true)});
+}
+
+// ---------- BLE (HM-10) con Web Bluetooth ----------
+async function conectarBle(){
+  estado('Elige el módulo en la lista...');
+  try{
+    if(!disp){
+      disp=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:[0xFFE0]});
+      disp.addEventListener('gattserverdisconnected',()=>{if(tipo==='ble'&&tx)desconectar(true)});
+    }
+    estado('Conectando...');
+    const srv=await disp.gatt.connect();
+    const ch=await (await srv.getPrimaryService(0xFFE0)).getCharacteristic(0xFFE1);
+    ch.oncharacteristicvaluechanged=e=>recibir(dec.decode(e.target.value,{stream:true}));
+    await ch.startNotifications();
+    const sinResp=ch.properties.writeWithoutResponse&&ch.writeValueWithoutResponse;
+    tx=s=>sinResp?ch.writeValueWithoutResponse(enc.encode(s)):ch.writeValue(enc.encode(s));
+    cerrar=async()=>{try{disp.gatt.disconnect()}catch(_){}};
+    listo('ble');
+  }catch(e){
+    if(disp)try{disp.gatt.disconnect()}catch(_){}
+    disp=null;fallo(e,true);
+  }
+}
+
+// ---------- estado de la conexión ----------
+function listo(t){
+  tipo=t;resto='';ultimoRx=0;conectadoEn=Date.now();
+  $('cConectar').classList.add('oculto');$('bDesc').classList.remove('oculto');
+  pill(true);estado('Conectado. Esperando respuesta del robot...');
+}
+async function desconectar(perdida){
+  if(!tx)return;
+  if(!perdida)try{await tx('M,0\n')}catch(_){}
+  const c=cerrar;tx=null;cerrar=null;tipo='';cola.length=0;ocupado=false;
+  $('cConectar').classList.remove('oculto');$('bDesc').classList.add('oculto');
+  pill(false);cero();mostrar(0,false);
+  estado(perdida?'Se perdió la conexión. El motor se detuvo solo. Toca Conectar otra vez.':'Desconectado.',perdida);
+  try{if(c)await c()}catch(_){}
+}
+function fallo(e,ble){
+  console.warn(e);
+  let m='No se pudo conectar: '+(e&&e.message||e);
+  if(e&&e.name==='NotFoundError'&&/cancel|chose|select|no port/i.test(e.message))m='No elegiste ningún módulo.';
+  else if(ble&&e&&e.name==='NotFoundError')m='Ese módulo no tiene el servicio de un HM-10 (FFE0). Revisa que sea un módulo BLE.';
+  else if(e&&e.name==='NetworkError')m='No se pudo conectar. Acércate al robot, revisa que el módulo tenga luz y vuelve a intentar.';
+  estado(m,true);
+}
+function pill(on){$('con').classList.toggle('on',on);$('con').querySelector('span').textContent=on?(tipo==='ble'?'BLE':'HC-05')+' conectado':'Sin conexión'}
+function estado(t,mal){$('estado').textContent=t;$('estado').classList.toggle('mal',!!mal)}
+
+// Si estamos conectados pero el Mega no contesta, el cable TX1 -> RXD (con el divisor) es el sospechoso
+setInterval(()=>{
+  if(!tx)return;
+  const ahora=Date.now();
+  if(ultimoRx&&ahora-ultimoRx<1000)estado('Conectado. El robot responde.');
+  else if(ahora-conectadoEn>2000)estado('Conectado al módulo, pero el robot no responde. Revisa el cable del pin 18 (TX1) al RXD del módulo con el divisor, y que el Mega tenga el programa cargado.',true);
+},500);
+
+// ---------- pantalla ----------
+function mostrar(v,p){
+  const w=Math.min(Math.abs(v),1)*50,b=$('barra');
+  b.style.width=w+'%';b.style.left=v>=0?'50%':(50-w)+'%';b.style.background=v>=0?'var(--ok)':'var(--warn)';
+  $('real').textContent=Math.round(Math.abs(v)*100)+'%';
+  $('dir').textContent=Math.abs(v)<0.02?'Detenido':(v>0?'Girando adelante':'Girando atrás');
+  paro=p;$('paro').textContent=paro?'REANUDAR':'PARO';$('paro').classList.toggle('activo',paro);$('banner').classList.toggle('oculto',!paro);
+}
+function cero(){$('vel').value=0;$('pedido').textContent='0%'}
+$('vel').oninput=()=>$('pedido').textContent=$('vel').value+'%';
+$('vmax').oninput=()=>$('vmaxV').textContent=$('vmax').value+'%';
+$('paro').onclick=()=>{enviar(paro?'R':'X',true);cero()};
+$('stop').onclick=cero;
+function mantener(id,dir){const b=$(id);
+  b.onpointerdown=e=>{b.setPointerCapture(e.pointerId);b.classList.add('on');cero();boton=dir};
+  b.onpointerup=b.onpointercancel=()=>{b.classList.remove('on');boton=0};
+  b.oncontextmenu=e=>e.preventDefault()}
+mantener('atras',-1);mantener('adelante',1);
+onkeydown=e=>{const k=e.key.toLowerCase();keys[k]=1;if(k===' ')cero()};
+onkeyup=e=>{keys[e.key.toLowerCase()]=0};
+onblur=()=>{for(const k in keys)keys[k]=0};
+
+$('bClasico').onclick=conectarClasico;
+$('bBle').onclick=conectarBle;
+$('bDesc').onclick=()=>desconectar(false);
+
+// Cada 100 ms: velocidad pedida "M,<-100..100>". También sirve para que el Mega sepa que seguimos conectados.
+setInterval(()=>{
+  if(!tx)return;
+  const k=$('vmax').value/100;
+  let v=$('vel').value/100;
+  const t=(keys['arrowright']?1:0)-(keys['arrowleft']?1:0);
+  if(boton)v=boton;else if(t)v=t;
+  enviar('M,'+Math.round(v*k*100));
+},100);
+
+// ---------- qué permite este navegador ----------
+(()=>{
+  const av=[];
+  if(!window.isSecureContext)av.push('Abre la app desde una dirección https:// (por ejemplo GitHub Pages). Desde http:// el navegador no permite Bluetooth.');
+  if(!('serial' in navigator)){$('bClasico').disabled=true;av.push('HC-05 / HC-06: este navegador no lo permite. Usa Chrome 137 o más nuevo en Android, o Chrome / Edge en PC.')}
+  if(!('bluetooth' in navigator)){$('bBle').disabled=true;av.push('HM-10: este navegador no lo permite. Usa Chrome en Android o PC; en iPhone, el navegador Bluefy.')}
+  if(!$('bClasico').disabled)av.push('HC-05 / HC-06: primero emparéjalo en los ajustes de Bluetooth del celular (clave 1234 o 0000).');
+  $('soporte').textContent=av.join(' ');
+})();
+</script></body></html>
